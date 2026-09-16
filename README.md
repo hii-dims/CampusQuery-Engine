@@ -4,6 +4,11 @@ A Java-based Retrieval-Augmented Generation (RAG) backend that allows users to u
 
 The application extracts text from PDFs, splits the text into chunks, generates vector embeddings locally using Ollama, stores those embeddings in PostgreSQL with pgvector, retrieves relevant chunks for a question, and uses a local LLM to generate an answer with source citations.
 
+## Problem
+
+University documents often contain information spread across multiple PDF files, making it difficult to quickly find specific policies, requirements, and procedures. This project provides a local RAG-based assistant that lets users upload those documents and ask natural-language questions while grounding responses in the uploaded content.
+
+
 ## Tech Stack
 
 * Java 17
@@ -83,116 +88,69 @@ The application follows this RAG pipeline:
                     └─────────────────────┘
 ```
 
-## How RAG Works
+## How the RAG Pipeline Works
 
-RAG stands for **Retrieval-Augmented Generation**.
+RAG (Retrieval-Augmented Generation) combines information retrieval with language generation.
 
-Instead of asking the LLM to answer directly from its general knowledge, the application first retrieves relevant information from the uploaded university documents.
+For this project, the LLM does not answer questions from its general knowledge alone. Instead, the application first searches the uploaded university documents for relevant content and then provides the retrieved passages to the LLM as context.
 
-The retrieved document chunks are then supplied to the LLM as context.
+### 1. Document Ingestion
 
-The process is:
-
-1. A user uploads a PDF.
-2. PDFBox extracts the text.
-3. The text is divided into overlapping chunks.
-4. Each chunk is converted into a 768-dimensional vector embedding.
-5. The embeddings are stored in PostgreSQL using pgvector.
-6. A user asks a question.
-7. The question is converted into an embedding.
-8. pgvector finds the most similar document chunks.
-9. The top five chunks are provided to the Qwen LLM.
-10. The LLM generates an answer using the retrieved context.
-11. The API returns the answer together with source information.
-
-## Main Features
-
-* PDF document ingestion
-* PDF text extraction
-* Configurable text chunking
-* Overlapping chunks for better context preservation
-* Local vector embedding generation
-* 768-dimensional embeddings
-* PostgreSQL persistence
-* pgvector similarity search
-* Retrieval-Augmented Generation
-* Local Qwen LLM
-* Source citations
-* Conversation history
-* User registration
-* BCrypt password hashing
-* HTTP Basic authentication
-* Role-based authorization
-* Admin-only document deletion
-* Bean Validation
-* Centralized API error handling
-* Swagger / OpenAPI documentation
-* Automated tests
-* Docker Compose PostgreSQL setup
-
-## Document Ingestion Pipeline
-
-When an authenticated user uploads a PDF, the backend performs the following operations:
+When a PDF is uploaded:
 
 ```text
-Multipart PDF
-     ↓
-DocumentIngestionService
-     ↓
-PdfTextExtractorService
-     ↓
-TextChunkingService
-     ↓
-DocumentEmbeddingService
-     ↓
-Ollama / nomic-embed-text
-     ↓
+PDF
+ ↓
+Text Extraction
+ ↓
+Text Chunking
+ ↓
+Embedding Generation
+ ↓
 PostgreSQL + pgvector
 ```
 
-The document metadata is stored in the `documents` table.
+- Apache PDFBox extracts text from the PDF.
+- The extracted text is split into overlapping chunks.
+- Each chunk is converted into a vector embedding using Ollama and `nomic-embed-text`.
+- The document, chunks, and embeddings are stored in PostgreSQL using pgvector.
 
-Individual text chunks are stored in `document_chunks`.
-
-Each chunk can have a 768-dimensional vector embedding associated with it.
-
-## Question Answering Pipeline
+### 2. Question Answering
 
 When a user asks a question:
 
 ```text
-User Question
-     ↓
-RagService
-     ↓
-SimilaritySearchService
-     ↓
+Question
+ ↓
 Question Embedding
-     ↓
-pgvector Similarity Search
-     ↓
+ ↓
+Vector Similarity Search
+ ↓
 Top 5 Relevant Chunks
-     ↓
-Qwen LLM
-     ↓
-Generated Answer
-     ↓
-Source Citations
+ ↓
+Qwen 3 4B Instruct
+ ↓
+Answer + Sources
 ```
 
-Conversation messages are also persisted so that conversation history can be maintained.
+The question is converted into an embedding and compared with stored document embeddings.
+
+The five most relevant chunks are retrieved and passed to the local Qwen model as context. The generated response is then returned together with source information from the retrieved documents.
+
+This approach helps keep answers grounded in the content of the uploaded documents rather than relying entirely on the model's pretrained knowledge.
+
 
 ## API Endpoints
 
-### Register User
+| Method | Endpoint | Authentication | Description |
+|---|---|---|---|
+| `POST` | `/api/auth/register` | Public | Register a new user account |
+| `POST` | `/api/documents/upload` | Authenticated | Upload and process a PDF document |
+| `POST` | `/api/rag/ask` | Authenticated | Retrieve relevant chunks and generate an answer |
+| `DELETE` | `/api/admin/documents/{id}` | `ADMIN` role | Delete a document and its associated chunks |
+| `GET` | `/api/health` | Public | Check application health |
 
-```http
-POST /api/auth/register
-```
-
-Creates a new user account.
-
-Example request:
+### Example: Register User
 
 ```json
 {
@@ -201,97 +159,54 @@ Example request:
 }
 ```
 
-Passwords are encoded with BCrypt before being stored.
+### Example: Ask a Question
 
-### Upload Document
-
-```http
-POST /api/documents/upload
+```json
+{
+  "question": "What is the attendance requirement for students?"
+}
 ```
 
-Requires authentication.
-
-Multipart fields:
-
-* `file` — PDF document
-* `title` — document title
-
-The document is processed through the complete ingestion pipeline.
-
-### Ask a Question
-
-```http
-POST /api/rag/ask
-```
-
-Requires authentication.
-
-The endpoint performs semantic retrieval and generates an answer using the retrieved document context.
-
-The response contains:
-
-* Generated answer
-* Document ID
-* Document title
-* File name
-* Chunk index
-
-### Delete Document
-
-```http
-DELETE /api/admin/documents/{id}
-```
-
-Requires the `ADMIN` role.
-
-The document's chunks are deleted before the document itself inside a transaction to respect the database foreign-key relationship.
-
-### Health Check
-
-```http
-GET /api/health
-```
-
-Returns application health information.
+The RAG response includes the generated answer together with source information such as document ID, document title, file name, and chunk index.
 
 ## Security
 
-Spring Security protects the application's API endpoints.
+The application uses Spring Security with HTTP Basic authentication and role-based authorization.
 
-Authorization rules include:
-
-* User registration is publicly accessible.
-* Health and Swagger endpoints are publicly accessible.
-* Application APIs require authentication.
-* `/api/admin/**` requires the `ADMIN` role.
-* Passwords are stored using BCrypt hashing.
-* API responses use DTOs instead of exposing JPA entities directly.
-* Environment secrets are stored in `.env`.
-* `.env` is excluded from Git using `.gitignore`.
+- Public access for user registration, health checks, and Swagger/OpenAPI documentation
+- Authentication required for document upload and RAG question answering
+- `ADMIN` role required for document deletion
+- Passwords hashed using BCrypt
+- DTOs used to avoid exposing persistence entities directly
+- Secrets and environment-specific configuration kept outside the repository
 
 ## Authentication Flow
 
+The application uses HTTP Basic authentication for protected API requests.
+
 ```text
-HTTP Basic Credentials
-        ↓
-Spring Security
-        ↓
-UserDetailsService
-        ↓
-UserRepository
-        ↓
+Register
+   ↓
+Username + Password
+   ↓
+BCrypt Password Hashing
+   ↓
 PostgreSQL
-        ↓
-BCrypt Password Verification
-        ↓
-Authenticated User
+   ↓
+HTTP Basic Authentication
+   ↓
+Spring Security
+   ↓
+Role-Based Authorization
+   ↓
+Protected API Endpoint
 ```
 
-The authenticated username is obtained from Spring Security rather than trusting a username supplied by the client for document ownership.
+Users authenticate with their registered credentials. Spring Security validates the credentials and applies role-based access rules to protected endpoints.
 
 ## Database Model
 
-The main entities are:
+The application uses a relational data model to manage users, documents, document chunks, embeddings, and conversation history.
 
 ```text
 User
@@ -306,85 +221,56 @@ ConversationMessage
 
 ### User
 
-Stores:
-
-* ID
-* Username
-* BCrypt password hash
-* Role
+Stores user identity and authentication data, including username, BCrypt password hash, and role.
 
 ### Document
 
-Stores:
-
-* ID
-* File name
-* Title
-* Uploading user
-* Upload timestamp
+Stores document metadata such as file name, title, uploading user, and upload timestamp.
 
 ### DocumentChunk
 
-Stores:
-
-* ID
-* Parent document
-* Chunk content
-* Chunk index
-* Vector embedding
+Stores individual text chunks extracted from documents, including chunk content, chunk index, and the associated 768-dimensional vector embedding.
 
 ### ConversationMessage
 
-Stores conversation history associated with users/conversations.
+Stores conversation history associated with users and their interactions with the RAG assistant.
 
 ## PostgreSQL + pgvector
 
-PostgreSQL is used as the main relational database.
+PostgreSQL is used as the primary relational database and vector store.
 
-The pgvector extension allows vector embeddings to be stored and searched directly inside PostgreSQL.
+The pgvector extension stores 768-dimensional embeddings alongside the application's relational data and enables vector similarity search.
 
-The application uses vector similarity search to find chunks that are semantically related to the user's question.
+When a user asks a question, the application compares the question embedding with stored document chunk embeddings to retrieve semantically relevant content.
 
-This avoids introducing a separate vector database for the project.
+Using PostgreSQL + pgvector keeps the project architecture simple by avoiding a separate vector database.
+
 
 ## Chunking Configuration
 
-The application uses configurable chunking settings:
+The application uses configurable text chunking settings:
 
 ```properties
 rag.chunk-size=1000
 rag.chunk-overlap=200
 ```
 
-A chunk size of 1000 characters is used with 200 characters of overlap.
-
-The overlap helps preserve context between neighboring chunks.
+Each document is split into chunks of up to 1000 characters with 200 characters of overlap. The overlap helps preserve context across chunk boundaries during retrieval.
 
 ## Local AI Models
 
-The project uses Ollama for local AI inference.
+The project uses [Ollama](https://ollama.com/) to run both embedding generation and local LLM inference.
 
 ### Embedding Model
 
-```text
-nomic-embed-text
-```
-
-The embedding model produces:
-
-```text
-768-dimensional vectors
-```
+`nomic-embed-text` generates 768-dimensional vector embeddings for document chunks and user questions.
 
 ### Generation Model
 
-```text
-qwen3:4b-instruct
-```
+`qwen3:4b-instruct` generates answers using the document chunks retrieved by the RAG pipeline.
 
-The local Qwen model generates the final answer using the retrieved document context.
+Using local models keeps the core AI pipeline self-contained and avoids requiring a hosted LLM API for inference.
 
-Using local models allows the core RAG pipeline to run locally.
 
 ## Swagger / OpenAPI
 
@@ -406,12 +292,12 @@ Swagger makes it easier to inspect and test the REST API during development.
 
 ### Prerequisites
 
-Install:
+Install the following:
 
-* Java 17
-* Docker
-* Docker Compose
-* Ollama
+- Java 17
+- Docker
+- Docker Compose
+- Ollama
 
 ### 1. Start PostgreSQL
 
@@ -421,36 +307,22 @@ From the project root:
 docker compose up -d
 ```
 
-The PostgreSQL container uses the pgvector-enabled image.
-
-Check the container:
+Verify the container is running:
 
 ```bash
 docker ps
 ```
 
-### 2. Start Ollama Models
+### 2. Start Ollama
 
-Pull the required models:
+Make sure Ollama is running, then pull the required models:
 
 ```bash
 ollama pull nomic-embed-text
 ollama pull qwen3:4b-instruct
 ```
 
-Make sure Ollama is running before testing document ingestion or RAG.
-
-### 3. Configure Environment Variables
-
-Create a `.env` file in the project root:
-
-```text
-OPENAI_API_KEY=your_key_here
-```
-
-The `.env` file is intentionally excluded from Git.
-
-### 4. Start the Spring Boot Application
+### 3. Start the Spring Boot Application
 
 Use Java 17:
 
@@ -459,24 +331,21 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 ./mvnw spring-boot:run
 ```
 
-The application runs on:
+The application runs on `http://localhost:8080`.
 
-```text
-http://localhost:8080
-```
-
-### 5. Run Tests
+### 4. Run Tests
 
 ```bash
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 ./mvnw test
 ```
 
+
 ## Docker
 
-Docker Compose is used for PostgreSQL.
+Docker Compose provides the PostgreSQL database used by the application. The configured database uses a pgvector-enabled PostgreSQL image.
 
-The database configuration is:
+### Database Configuration
 
 ```text
 Database: university_knowledge
@@ -497,6 +366,7 @@ docker compose down
 ```
 
 ## Project Structure
+
 
 ```text
 university-knowledge-assistant/
@@ -561,15 +431,15 @@ university-knowledge-assistant/
 │           ├── KnowledgeAssistantApplicationTests.java
 │           └── RegisterRequestValidationTest.java
 │
-└── .env
-   └── Not committed to Git
 ```
+
+
 
 ## Error Handling
 
-The application uses Bean Validation for validating incoming requests.
+The application uses Bean Validation for validating incoming API requests.
 
-Validation errors are handled centrally using `@RestControllerAdvice`.
+Validation errors are handled centrally using `@RestControllerAdvice`, providing a consistent error response format across the API.
 
 Example validation response:
 
@@ -584,30 +454,25 @@ Example validation response:
 }
 ```
 
-This provides a consistent error format across the API.
-
 ## Testing
 
-The project includes automated tests for:
+The project includes automated tests covering:
 
-* Spring application context startup
-* Valid registration requests
-* Blank username validation
-* Short password validation
+- Spring application context startup
+- Valid registration requests
+- Blank username validation
+- Short password validation
 
-Run all tests with:
+Run the test suite with:
 
 ```bash
 ./mvnw test
 ```
-
-The complete Maven test suite currently passes successfully.
-
 ## Key Design Decisions
 
 ### Local AI Inference
 
-Ollama is used for local embeddings and LLM generation, allowing the RAG pipeline to run locally.
+Ollama is used for local embeddings and LLM generation, allowing the RAG pipeline to run locally without relying on a hosted inference API.
 
 ### PostgreSQL + pgvector
 
@@ -631,22 +496,71 @@ Document chunks are deleted before the parent document within a transaction to m
 
 ### Conversation History
 
-Conversation messages are persisted so that previous interactions can be used as part of the application's conversational functionality.
+Conversation messages are persisted to support the application's conversational functionality.
+
+
+## What I Learned
+
+Building this project gave me hands-on experience with:
+
+- Designing a RAG pipeline from document ingestion through retrieval and generation
+- Generating and storing vector embeddings with Ollama and pgvector
+- Implementing semantic similarity search in PostgreSQL
+- Building layered REST APIs with Spring Boot
+- Applying Spring Security, HTTP Basic authentication, BCrypt, and role-based authorization
+- Designing relational entities for documents, chunks, users, and conversation history
+- Handling validation and API errors consistently
+- Running AI services locally with Ollama
+- Using Docker Compose to manage the PostgreSQL development environment
+
+## Example Queries
+
+After uploading a university PDF, users can ask questions such as:
+
+- `What is the attendance requirement for students?`
+- `What are the eligibility requirements for this course?`
+- `What documents are required for registration?`
+- `What is the examination policy?`
+
+Example request:
+
+```json
+{
+  "question": "What is the attendance requirement for students?"
+}
+```
+
+The response contains the generated answer together with source information from the retrieved document chunks.
+
+
+## Demo / Screenshots
+
+The application can be explored through its REST APIs using Swagger / OpenAPI.
+
+Recommended screenshots for the project README:
+
+- Swagger UI showing the available API endpoints
+- PDF document upload request and response
+- RAG question request and generated answer with source information
+- PostgreSQL / pgvector data after document ingestion
+
+Screenshots can be added to the repository later under a `docs/images/` directory.
+
 
 ## Future Improvements
 
 Potential improvements include:
 
-* JWT-based authentication
-* Refresh tokens
-* Document listing and search
-* Streaming LLM responses
-* RAG evaluation metrics
-* Retrieval re-ranking
-* Hybrid keyword + vector search
-* More integration tests
-* Production-ready secret management
-* Observability and metrics
-* CI/CD pipeline
-* Better document metadata management
+- JWT-based authentication
+- Refresh tokens
+- Document listing and search
+- Streaming LLM responses
+- RAG evaluation metrics
+- Retrieval re-ranking
+- Hybrid keyword + vector search
+- More integration tests
+- Production-ready secret management
+- Observability and metrics
+- CI/CD pipeline
+- Better document metadata management
 
