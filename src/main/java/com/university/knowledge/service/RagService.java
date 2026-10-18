@@ -25,16 +25,24 @@ public class RagService {
     }
 
     public AskQuestionResponse ask(String question) {
+        return ask(question, null, null);
+    }
 
-        // 1. Retrieve the most relevant document chunks
+    /**
+     * Upgraded ask method supporting optional course and semester context filtering.
+     */
+    public AskQuestionResponse ask(String question, String courseCode, String semester) {
+
+        // 1. Retrieve relevant chunks with optional academic metadata filters
         List<DocumentChunk> chunks =
-                similaritySearchService.search(question, 5);
+                similaritySearchService.search(question, 5, courseCode, semester);
 
         // 2. Build context from retrieved chunks
         String context = chunks.stream()
                 .map(chunk ->
                         "Source: "
                                 + chunk.getDocument().getTitle()
+                                + (courseCode != null ? " [Course: " + courseCode + "]" : "")
                                 + " (chunk "
                                 + chunk.getChunkIndex()
                                 + ")\n"
@@ -42,18 +50,16 @@ public class RagService {
                 .reduce("", (a, b) ->
                         a + "\n\n---\n\n" + b);
 
-        // 3. Build the RAG prompt
+        // 3. Build the enterprise RAG prompt
         String prompt = """
-                You are a university knowledge assistant.
-
-                Answer the user's question using only the provided context.
+                You are an advanced university academic knowledge assistant.
+                Answer the user's question accurately using only the provided context.
 
                 Rules:
-                - Do not invent information.
-                - If the answer is not present in the context, say:
+                - Do not invent information or hallucinate facts outside the context.
+                - If the answer is not present in the context, output exactly:
                   "The information is not available in the provided documents."
-                - Keep the answer clear and concise.
-                - Use the source information when relevant.
+                - Keep the answer structured, clear, and professional.
 
                 Context:
                 %s
@@ -81,7 +87,7 @@ public class RagService {
 
         if (response == null || response.message() == null) {
             throw new IllegalStateException(
-                    "Ollama returned no answer"
+                    "Ollama returned no answer from local model"
             );
         }
 

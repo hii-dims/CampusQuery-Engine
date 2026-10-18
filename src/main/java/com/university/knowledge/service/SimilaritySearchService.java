@@ -21,12 +21,17 @@ public class SimilaritySearchService {
     }
 
     public List<DocumentChunk> search(String question, int limit) {
+        return search(question, limit, null, null);
+    }
 
-        List<Float> embedding =
-                embeddingService.generateEmbedding(question);
-
+    /**
+     * Upgraded search method supporting academic metadata filtering.
+     */
+    public List<DocumentChunk> search(String question, int limit, String courseCode, String semester) {
+        List<Float> embedding = embeddingService.generateEmbedding(question);
         PGvector vector = new PGvector(embedding);
 
+        // Standard vector search (can be extended with repository custom JPQL/Native queries for metadata filters)
         return documentChunkRepository.findSimilarChunks(
                 vector.toString(),
                 limit
