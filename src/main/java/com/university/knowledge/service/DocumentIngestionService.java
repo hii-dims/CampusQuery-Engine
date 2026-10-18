@@ -25,60 +25,62 @@ public class DocumentIngestionService {
     private final UserRepository userRepository;
 
     public DocumentIngestionService(
-        PdfTextExtractorService pdfTextExtractorService,
-        TextChunkingService textChunkingService,
-        DocumentRepository documentRepository,
-        DocumentEmbeddingService documentEmbeddingService,
-        UserRepository userRepository) {
-
+            PdfTextExtractorService pdfTextExtractorService,
+            TextChunkingService textChunkingService,
+            DocumentRepository documentRepository,
+            DocumentChunkRepository documentChunkRepository, // Fixed: Added missing dependency injection
+            DocumentEmbeddingService documentEmbeddingService,
+            UserRepository userRepository) {
 
         this.pdfTextExtractorService = pdfTextExtractorService;
         this.textChunkingService = textChunkingService;
         this.documentRepository = documentRepository;
-        this.documentChunkRepository = documentChunkRepository;
+        this.documentChunkRepository = documentChunkRepository; // Fixed: Assigned properly
         this.documentEmbeddingService = documentEmbeddingService;
         this.userRepository = userRepository;
     }
 
+    /**
+     * Upgraded ingest method accepting academic metadata for enterprise RAG.
+     */
     public Document ingest(
             MultipartFile file,
             String title,
-            String uploadedBy) throws IOException {
+            String uploadedBy,
+            String courseCode,   // Added academic context
+            String semester,     // Added academic context
+            String department) throws IOException { // Added academic context
 
-        Path tempFile =
-                Files.createTempFile("rag-upload-", ".pdf");
+        Path tempFile = Files.createTempFile("rag-upload-", ".pdf");
 
         try {
             file.transferTo(tempFile);
 
-            String text =
-                    pdfTextExtractorService.extractText(tempFile);
+            String text = pdfTextExtractorService.extractText(tempFile);
 
-            List<String> chunks =
-                    textChunkingService.chunk(text);
-            User user=
-                    userRepository.findByUsername(UploadedBy)        
-                            .orElseThrow(() ->
-                                new IllegalArgumentException(
-                                        "User not found"
-                                ));
-           Document document =
-                    documentRepository.save(
-                            new Document(
-                                    file.getOriginalFilename(),
-                                    title,
-                                    uploadedBy
-                            )
-                    );
+            List<String> chunks = textChunkingService.chunk(text);
+
+            // Fixed typo: UploadedBy -> uploadedBy
+            User user = userRepository.findByUsername(uploadedBy)
+                    .orElseThrow(() -> new IllegalArgumentException("User not found"));
+
+            Document document = documentRepository.save(
+                    new Document(
+                            file.getOriginalFilename(),
+                            title,
+                            uploadedBy
+                    )
+            );
 
             for (int i = 0; i < chunks.size(); i++) {
+                DocumentChunk chunk = new DocumentChunk(
+                        document,
+                        chunks.get(i),
+                        i
+                );
 
-                DocumentChunk chunk =
-                        new DocumentChunk(
-                                document,
-                                chunks.get(i),
-                                i
-                        );
+                // Save chunk to repository before embedding generation
+                documentChunkRepository.save(chunk);
 
                 documentEmbeddingService
                         .generateAndStoreEmbedding(chunk);
