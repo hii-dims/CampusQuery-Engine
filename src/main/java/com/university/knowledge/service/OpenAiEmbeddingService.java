@@ -2,6 +2,7 @@ package com.university.knowledge.service;
 
 import java.util.List;
 
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
@@ -16,6 +17,11 @@ public class OpenAiEmbeddingService {
                 .build();
     }
 
+    /**
+     * Generates text embeddings with Spring caching enabled.
+     * Repeated embedding requests for the same text will load instantly from memory.
+     */
+    @Cacheable(value = "embeddings", key = "#text")
     public List<Float> generateEmbedding(String text) {
 
         OllamaEmbeddingRequest request =
